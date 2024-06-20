@@ -6,11 +6,12 @@ import argparse
 from datetime import datetime, timedelta
 import asyncio
 import lz4.frame
+from pathlib import Path
 
 
 
-
-DIR_PATH = os.path.dirname(os.path.realpath(__file__))
+# MUST USE PATHLIB INSTEAD
+DIR_PATH = Path(__file__).parent
 BUCKET = "hyperliquid-archive"
 
 # s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
@@ -26,11 +27,11 @@ def get_args():
 
     global_parser = subparser.add_parser("global_settings", add_help=False)
     global_parser.add_argument("--all", help="Apply action to all available dates and times.", action="store_true", default=False)
-    global_parser.add_argument("-sd", help="Starting date as one unbroken string formatted: YYYYMMDD.  e.g. 20230916")
-    global_parser.add_argument("-sh", help="Hour of the starting day as an integer between 0 and 23. e.g. 9", type=int, default=0)
-    global_parser.add_argument("-ed", help="Ending date as one unbroken string formatted: YYYYMMDD.  e.g. 20230916")
-    global_parser.add_argument("-eh", help="Hour of the ending day as an integer between 0 and 23. e.g. 9", type=int, default=23)
-    global_parser.add_argument("-t", help="Tickers of assets to be downloaded seperated by spaces. e.g. BTC ETH", nargs="+")
+    global_parser.add_argument("-sd", metavar="Start date", help="Starting date as one unbroken string formatted: YYYYMMDD.  e.g. 20230916")
+    global_parser.add_argument("-sh", metavar="Start hour", help="Hour of the starting day as an integer between 0 and 23. e.g. 9  Default: 0", type=int, default=0)
+    global_parser.add_argument("-ed", metavar="End date", help="Ending date as one unbroken string formatted: YYYYMMDD.  e.g. 20230916")
+    global_parser.add_argument("-eh", metavar="End hour", help="Hour of the ending day as an integer between 0 and 23. e.g. 9  Default: 23", type=int, default=23)
+    global_parser.add_argument("-t", metavar="Tickers", help="Tickers of assets to be downloaded seperated by spaces. e.g. BTC ETH", nargs="+")
 
     download_parser = subparser.add_parser("download", help="Download historical market data", parents=[global_parser])
     decompress_parser = subparser.add_parser("decompress", help="Decompress downloaded lz4 data", parents=[global_parser])
@@ -80,48 +81,70 @@ def make_date_hour_list(date_list, start_hour, end_hour, delimiter="/"):
 
 async def download_object(s3, asset, date_hour):
     date_and_hour = date_hour.split("/")
-    s3.download_file(BUCKET, f"market_data/{date_hour}/l2Book/{asset}.lz4", f"{DIR_PATH}/downloads/{asset}/{date_and_hour[0]}-{date_and_hour[1]}")
+    s3.download_file(BUCKET, f"market_data/{date_hour}/l2Book/{asset}.lz4", f"{DIR_PATH}/downloads/{asset}/{date_and_hour[0]}-{date_and_hour[1]}.lz4")
 
 
 
 
 async def download_objects(s3, assets, date_hour_list):
-    print("Downloading objects...")
+    print(f"Downloading {len(date_hour_list)} objects...")
     for asset in assets:
         await asyncio.gather(*[download_object(s3, asset, date_hour) for date_hour in date_hour_list])
 
 
 
 
-def decompress_files(assets, date_hour_list):
-    pass
+async def decompress_file(asset, date_hour):
+    lz_file_path = DIR_PATH / "downloads" / asset / f"{date_hour}.lz4"
+    file_path = DIR_PATH / "downloads" / asset / date_hour
+
+    if not lz_file_path.is_file():
+        print(f"decompress_file: file not found: {lz_file_path}")
+        return
+
+    with lz4.frame.open(lz_file_path, mode='r') as lzfile: 
+        data = lzfile.read()
+        with open(file_path, "wb") as file:
+            file.write(data)
+
+
+
+
+async def decompress_files(assets, date_hour_list):
+    print(f"Decompressing {len(date_hour_list)} files...")
+    for asset in assets:
+        await asyncio.gather(*[decompress_file(asset, date_hour) for date_hour in date_hour_list])
 
 
 
 
 def main():
+    print(DIR_PATH)
     s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
     args = get_args()
 
-    if not os.path.isdir("downloads"):
-        os.mkdir("downloads")
+    downloads_path = DIR_PATH / "downloads"
+    downloads_path.mkdir(exist_ok=True)
 
     for asset in args.t:
-        if not os.path.isdir(f"downloads/{asset}"):
-            os.mkdir(f"downloads/{asset}")
+        asset_path = downloads_path / asset
+        asset_path.mkdir(exist_ok=True)
 
     date_list = make_date_list(args.sd, args.ed)
+    loop = asyncio.new_event_loop()
     
     if args.tool == "download":
         date_hour_list = make_date_hour_list(date_list, args.sh, args.eh)
-        loop = asyncio.new_event_loop()
         loop.run_until_complete(download_objects(s3, args.t, date_hour_list))
         loop.close()
-        
-        print("Done")
 
     if args.tool == "decompress":
         date_hour_list = make_date_hour_list(date_list, args.sh, args.eh, delimiter="-")
+        loop.run_until_complete(decompress_files(args.t, date_hour_list))
+        loop.close()
+
+
+    print("Done")
 
     
     
