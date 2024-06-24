@@ -148,7 +148,7 @@ def write_rows(csv_writer, line):
 
 async def convert_file(asset, date_hour):
     file_path = DIR_PATH / "downloads" / asset / date_hour
-    csv_path = DIR_PATH / "downloads" / asset / f"{date_hour}.csv"
+    csv_path = DIR_PATH / "csv" / asset / f"{date_hour}.csv"
     
     with open(csv_path, "w", newline='') as csv_file:
         csv_writer = csv.writer(csv_file, dialect="excel")
@@ -178,9 +178,14 @@ def main():
     downloads_path = DIR_PATH / "downloads"
     downloads_path.mkdir(exist_ok=True)
 
+    csv_path = DIR_PATH / "csv"
+    csv_path.mkdir(exist_ok=True)
+
     for asset in args.t:
-        asset_path = downloads_path / asset
-        asset_path.mkdir(exist_ok=True)
+        downloads_asset_path = downloads_path / asset
+        downloads_asset_path.mkdir(exist_ok=True)
+        csv_asset_path = csv_path / asset
+        csv_asset_path.mkdir(exist_ok=True)
 
     date_list = make_date_list(args.sd, args.ed)
     loop = asyncio.new_event_loop()
